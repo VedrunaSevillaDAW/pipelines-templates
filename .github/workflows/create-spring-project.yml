@@ -1,0 +1,255 @@
+name: 'Spring Boot Project Initializer'
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Nombre del proyecto Spring a crear'
+        required: true
+        type: string
+      bbdd:
+        description: 'Base de Datos a utilizar (NA si no aplica)'
+        required: true
+        type: choice
+        default: 'NA'
+        options:
+          - MySQL
+          - PostgreSQL
+          - MongoDB
+          - Cassandra
+          - NA
+      redis:
+        description: '¿Incluir Redis?'
+        required: true
+        type: boolean
+        default: false
+      elastic:
+        description: '¿Incluir Elastic Search?'
+        required: true
+        type: boolean
+        default: false
+      kafka:
+        description: '¿Incluir Kafka?'
+        required: true
+        type: boolean
+        default: false
+      rabbit:
+        description: '¿Incluir RabbitMQ?'
+        required: true
+        type: boolean
+        default: false
+      security:
+        description: '¿Incluir Spring Security?'
+        required: true
+        type: boolean
+        default: false
+      servertype:
+        description: 'Tipo de servidor de spring (NA si no aplica)'
+        required: true
+        type: choice
+        default: 'NA'
+        options:
+          - Authorization
+          - Resource
+          - NA
+
+jobs:
+  initialize-spring-project:
+    runs-on: ubuntu-latest
+    # Necesitas un token con permiso de 'repo' para crear repositorios.
+    # Usaremos un token personal (PAT) almacenado en secrets, ya que GITHUB_TOKEN
+    # no tiene permiso para crear repos por defecto.
+    environment: tst
+    # Tomamos las variables de los inputs del workflow_dispatch
+    env:
+      PROJECT_NAME: ${{ github.event.inputs.project }}
+      BBDD_TYPE: ${{ github.event.inputs.bbdd }}
+      NEEDS_REDIS: ${{ github.event.inputs.redis }}
+      NEEDS_ELASTIC: ${{ github.event.inputs.elastic }}
+      NEEDS_KAFKA: ${{ github.event.inputs.kafka }}
+      NEEDS_RABBIT: ${{ github.event.inputs.rabbit }}
+      NEEDS_SECURITY: ${{ github.event.inputs.security }}
+      SERVER_TYPE: ${{ github.event.inputs.servertype }}
+      # Dependencias base:
+      DEPS: 'web,lombok,configuration-processor,devtools'
+      
+    steps:
+        # --- 0. INSTALAR HERRAMIENTAS NECESARIAS ---
+      - name: Instalar herramientas (Java, yq para YAML, jq para JSON)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          wget https://github.com/mikefarah/yq/releases/download/v4.47.2/yq_linux_amd64 -O /usr/local/bin/yq
+          chmod +x /usr/local/bin/yq
+
+        # --- Configurar Java 17 ---
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # --- 1. CREAR EL REPOSITORIO NUEVO ---
+      - name: Crear nuevo repositorio en GitHub
+        env:
+          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO }} # Usa un PAT con permiso de 'repo'
+        run: |
+          echo "Creando repositorio '${PROJECT_NAME}'..."
+          gh repo create $PROJECT_NAME --public -d "Proyecto generado por pipeline de la fundación Vedruna"
+          git clone https://oauth2:${{ secrets.PAT_CREATE_REPO }}@github.com/${{ github.repository_owner }}/${PROJECT_NAME}.git
+          echo "Repositorio creado como: '${PROJECT_NAME}'..."
+
+      # --- 1. Determinar Dependencias (Genera una variable de salida) ---
+      - name: Determinar dependencias para Spring Initializr
+        id: deps
+        shell: bash
+        run: |
+          DEPS="$DEPS"
+          
+          # Lógica de BBDD
+          case "$BBDD_TYPE" in
+            "MySQL") DEPS="$DEPS,data-jpa,mysql";;
+            "PostgreSQL") DEPS="$DEPS,data-jpa,postgresql";;
+            "MongoDB") DEPS="$DEPS,data-mongodb";;
+            "Cassandra") DEPS="$DEPS,data-cassandra";;
+          esac
+
+          # Lógica de componentes
+          if [[ "$NEEDS_REDIS" == "true" ]]; then DEPS="$DEPS,data-redis"; fi
+          if [[ "$NEEDS_ELASTIC" == "true" ]]; then DEPS="$DEPS,data-elasticsearch"; fi
+          if [[ "$NEEDS_KAFKA" == "true" ]]; then DEPS="$DEPS,kafka"; fi
+          if [[ "$NEEDS_RABBIT" == "true" ]]; then DEPS="$DEPS,amqp"; fi
+
+          # Lógica de Seguridad y Servidor
+          if [[ "$NEEDS_SECURITY" == "true" ]]; then 
+            DEPS="$DEPS,security"
+            if [[ "$SERVER_TYPE" == "Authorization" ]]; then
+              DEPS="$DEPS,oauth2-authorization-server"
+            elif [[ "$SERVER_TYPE" == "Resource" ]]; then
+              DEPS="$DEPS,oauth2-resource-server"
+            fi
+          fi
+          
+          echo "Dependencias finales: $DEPS"
+          # Exportamos la variable para el siguiente step
+          echo "deps=$DEPS" >> $GITHUB_OUTPUT
+          
+      # --- 2. GENERACIÓN DEL PROYECTO BASE ---
+      - name: Generar proyecto Spring Initializr
+        id: generate
+        shell: bash
+        # Entramos en el repo clonado para generar el proyecto dentro
+        run: |
+          cd $PROJECT_NAME
+          echo "Generando proyecto Spring Boot con las dependencias: ${{ steps.deps.outputs.deps }}"
+          curl https://start.spring.io/starter.zip \
+            -d name=$PROJECT_NAME \
+            -d bootVersion=3.5.6 \
+            -d baseDir=. \
+            -d type=maven-project \
+            -d language=java \
+            -d dependencies=${{ steps.deps.outputs.deps }} \
+            -d packaging=jar \
+            -d javaVersion=21 \
+            -o project.zip
+            
+          unzip project.zip
+          rm project.zip
+          
+          # Preparamos el archivo YAML para los siguientes pasos
+          rm src/main/resources/application.properties
+          touch src/main/resources/application.yaml
+          yq e '.spring.application.name = "'"$PROJECT_NAME"'"' -i src/main/resources/application.yaml
+
+
+      # --- 3. CONFIGURACIÓN CONDICIONAL DEL application.yaml ---
+      
+      # 3.1. Configurar BBDD (si BBDD_TYPE no es NA)
+      - name: Configurar Base de Datos en application.yaml
+        if: env.BBDD_TYPE != 'NA'
+        shell: bash
+        run: |
+          cd $PROJECT_NAME
+          YAML_PATH="src/main/resources/application.yaml"
+          echo "spring.datasource.url: jdbc:..." >> $YAML_PATH
+          echo "spring.datasource.username: user" >> $YAML_PATH
+          echo "spring.datasource.password: password" >> $YAML_PATH
+          echo "spring.jpa.hibernate.ddl-auto: update" >> $YAML_PATH
+          
+      # 3.2. Configurar Redis (si NEEDS_REDIS es true)
+      - name: Configurar Redis en application.yaml
+        if: env.NEEDS_REDIS == 'true'
+        shell: bash
+        run: |
+          cd $PROJECT_NAME
+          yq e '.spring.data.redis.host = "localhost"' -i src/main/resources/application.yaml
+          yq e '.spring.data.redis.port = 6379' -i src/main/resources/application.yaml
+          
+      # 3.3. Configurar Kafka (si NEEDS_KAFKA es true)
+      - name: Configurar Kafka en application.yaml
+        if: env.NEEDS_KAFKA == 'true'
+        shell: bash
+        run: |
+          cd $PROJECT_NAME
+          yq e '.spring.kafka.bootstrap-servers = "localhost:9092"' -i src/main/resources/application.yaml
+          
+      # 3.4. Configurar RabbitMQ (si NEEDS_RABBIT es true)
+      - name: Configurar RabbitMQ en application.yaml
+        if: env.NEEDS_RABBIT == 'true'
+        shell: bash
+        run: |
+          cd $PROJECT_NAME
+          yq e '.spring.rabbitmq.host = "localhost"' -i src/main/resources/application.yaml
+
+      # 3.5. Configurar Resource Server (si SERVER_TYPE es Resource)
+      - name: Configurar Spring Resource Server en application.yaml
+        if: env.SERVER_TYPE == 'Resource'
+        shell: bash
+        run: |
+          cd $PROJECT_NAME
+          yq e '.spring.security.oauth2.resourceserver.jwt.issuer-uri = "http://localhost:9000"' -i src/main/resources/application.yaml
+          
+          
+      # --- 4. CREACIÓN DE ESTRUCTURA Y ARCHIVOS DE SOPORTE ---
+      - name: Crear Estructura de Arquitectura Hexagonal y Archivos Base
+        shell: bash
+        run: |
+          cd $PROJECT_NAME
+          BASE_PACKAGE="com/example/$PROJECT_NAME"
+          JAVA_PATH="src/main/java/$BASE_PACKAGE"
+
+          # Creación de la estructura de paquetes Hexagonal
+          mkdir -p $JAVA_PATH/domain/model
+          mkdir -p $JAVA_PATH/domain/port/in
+          mkdir -p $JAVA_PATH/domain/port/out
+          
+          mkdir -p $JAVA_PATH/application/service
+          mkdir -p $JAVA_PATH/application/usecase
+          
+          mkdir -p $JAVA_PATH/infrastructure/adapter/in/web
+          mkdir -p $JAVA_PATH/infrastructure/adapter/out/persistence
+          mkdir -p $JAVA_PATH/infrastructure/config
+          
+          echo "Estructura hexagonal creada."
+          
+          # Creación de README
+          echo "# $PROJECT_NAME" > README.md
+          echo "" >> README.md
+          echo "Proyecto generado automáticamente con Arquitectura Hexagonal." >> README.md
+
+
+      # --- 3. PUSH AL REPOSITORIO NUEVO ---
+      - name: Commit and Push to new repository
+        env:
+          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO }}
+        run: |
+          cd $PROJECT_NAME
+          
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          git add .
+          git commit -m "feat: Proyecto Spring Boot inicializado por el pipeline de la fundación Vedruna"
+          git push -u origin master
+          
+          echo "Proyecto ubicado en el repositorio: https://github.com/${{ github.repository_owner }}/$PROJECT_NAME"
