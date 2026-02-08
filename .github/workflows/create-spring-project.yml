@@ -87,7 +87,7 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
       # --- 1. CREAR EL REPOSITORIO NUEVO ---
       - name: Crear nuevo repositorio en GitHub
@@ -98,7 +98,14 @@ jobs:
           gh repo create $PROJECT_NAME --public -d "Proyecto generado por pipeline de la fundación Vedruna"
           git clone https://oauth2:${{ secrets.PAT_CREATE_REPO }}@github.com/${{ github.repository_owner }}/${PROJECT_NAME}.git
           echo "Repositorio creado como: '${PROJECT_NAME}'..."
-
+          
+      # --- Normalizar nombre para paquete Java ---
+      - name: Normalizar nombre del proyecto
+        id: normalize
+        run: |
+          NORMALIZED=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+          echo "normalized=$NORMALIZED" >> $GITHUB_OUTPUT
+        
       # --- 1. Determinar Dependencias (Genera una variable de salida) ---
       - name: Determinar dependencias para Spring Initializr
         id: deps
@@ -150,7 +157,7 @@ jobs:
             -d language=java \
             -d dependencies=${{ steps.deps.outputs.deps }} \
             -d packaging=jar \
-            -d javaVersion=21 \
+            -d javaVersion=17 \
             -o project.zip
             
           unzip project.zip
@@ -170,11 +177,10 @@ jobs:
         shell: bash
         run: |
           cd $PROJECT_NAME
-          YAML_PATH="src/main/resources/application.yaml"
-          echo "spring.datasource.url: jdbc:..." >> $YAML_PATH
-          echo "spring.datasource.username: user" >> $YAML_PATH
-          echo "spring.datasource.password: password" >> $YAML_PATH
-          echo "spring.jpa.hibernate.ddl-auto: update" >> $YAML_PATH
+          yq e '.spring.datasource.url = "jdbc:mysql://localhost:3306/db_name"' -i src/main/resources/application.yaml
+          yq e '.spring.datasource.username = "user"' -i src/main/resources/application.yaml
+          yq e '.spring.datasource.password = "password"' -i src/main/resources/application.yaml
+          yq e '.spring.jpa.hibernate.ddl-auto = "update"' -i src/main/resources/application.yaml
           
       # 3.2. Configurar Redis (si NEEDS_REDIS es true)
       - name: Configurar Redis en application.yaml
@@ -237,8 +243,46 @@ jobs:
           echo "" >> README.md
           echo "Proyecto generado automáticamente con Arquitectura Hexagonal." >> README.md
 
+      # --- 5. DOCKERIZAR EL PROYECTO ---
+      - name: Crear Dockerfile y .dockerignore
+        shell: bash
+        run: |
+          cd "$PROJECT_NAME"
 
-      # --- 3. PUSH AL REPOSITORIO NUEVO ---
+          # Dockerfile multi-stage (build + runtime) para Java 17
+          cat > Dockerfile << 'EOF'
+          # ===== BUILD STAGE =====
+          FROM maven:3.9-eclipse-temurin-17 AS build
+          WORKDIR /app
+          COPY pom.xml .
+          COPY src ./src
+          RUN mvn -B -DskipTests package
+
+          # ===== RUNTIME STAGE =====
+          FROM eclipse-temurin:17-jre
+          WORKDIR /app
+          COPY --from=build /app/target/*.jar app.jar
+          EXPOSE 8080
+          ENTRYPOINT ["java","-jar","app.jar"]
+          EOF
+
+          # .dockerignore para acelerar builds (opcional pero recomendable)
+          cat > .dockerignore << 'EOF'
+          target
+          .mvn
+          .idea
+          *.iml
+          .DS_Store
+          EOF
+
+      - name: Docker build (Spring)
+        shell: bash
+        run: |
+          cd "$PROJECT_NAME"
+          docker build -t "${PROJECT_NAME}:ci" .
+
+
+      # --- 6. PUSH AL REPOSITORIO NUEVO ---
       - name: Commit and Push to new repository
         env:
           GH_TOKEN: ${{ secrets.PAT_CREATE_REPO }}
@@ -250,6 +294,10 @@ jobs:
           
           git add .
           git commit -m "feat: Proyecto Spring Boot inicializado por el pipeline de la fundación Vedruna"
-          git push -u origin master
+          git branch -M main
+          git push -u origin main
           
           echo "Proyecto ubicado en el repositorio: https://github.com/${{ github.repository_owner }}/$PROJECT_NAME"
+
+
+          
