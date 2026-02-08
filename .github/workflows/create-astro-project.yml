@@ -102,7 +102,7 @@ jobs:
           FROM node:20-alpine AS build
           WORKDIR /app
           COPY package*.json ./
-          RUN npm ci
+          RUN npm install
           COPY . .
           RUN npm run build
 
@@ -111,7 +111,6 @@ jobs:
           FROM nginx:alpine
           COPY --from=build /app/dist /usr/share/nginx/html
           EXPOSE 80
-          EOF
 
 
           cat > .dockerignore << 'EOF'
