@@ -94,15 +94,20 @@ jobs:
       - name: Crear Dockerfile y .dockerignore
         shell: bash
         run: |
+          set -e
           cd "$PROJECT_NAME"
-      
+          
+          # -------- Dockerfile --------
           cat > Dockerfile << 'EOF'
           # ===== BUILD STAGE =====
           FROM node:20-alpine AS build
           WORKDIR /app
-          COPY package*.json ./
-          RUN npm install
+      
+          # Copiamos todo el proyecto Astro
           COPY . .
+      
+          # Instalamos dependencias y construimos
+          RUN npm install
           RUN npm run build
       
           # ===== RUN STAGE =====
@@ -111,12 +116,14 @@ jobs:
           EXPOSE 80
           EOF
       
+          # -------- .dockerignore --------
           cat > .dockerignore << 'EOF'
           node_modules
           dist
           .astro
           .git
           EOF
+
 
 
 
