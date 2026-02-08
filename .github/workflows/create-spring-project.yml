@@ -103,11 +103,8 @@ jobs:
 
           echo "Token presente. Longitud: ${#GH_TOKEN}"
 
-          # Forzar login de gh con el token
-          echo "$GH_TOKEN" | gh auth login --with-token
-
           # Verificar credenciales
-          gh api user >/dev/null
+          gh api user 
 
           echo "Creando repositorio 'VedrunaSevillaDAW/${PROJECT_NAME}'..."
           gh repo create "VedrunaSevillaDAW/${PROJECT_NAME}" --public -d "Proyecto generado por pipeline de la fundación Vedruna" --confirm
