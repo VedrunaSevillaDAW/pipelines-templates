@@ -92,13 +92,30 @@ jobs:
       # --- 1. CREAR EL REPOSITORIO NUEVO ---
       - name: Crear nuevo repositorio en GitHub
         env:
-          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO_1 }} # Usa un PAT con permiso de 'repo'
+          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO_1 }}
         run: |
-          echo "Creando repositorio '${PROJECT_NAME}'..."
-          gh repo create $PROJECT_NAME --public -d "Proyecto generado por pipeline de la fundación Vedruna"
-          git clone https://oauth2:${{ secrets.PAT_CREATE_REPO_1 }}@github.com/${{ github.repository_owner }}/${PROJECT_NAME}.git
-          echo "Repositorio creado como: '${PROJECT_NAME}'..."
-          
+          set -e
+
+          if [ -z "$GH_TOKEN" ]; then
+            echo "GH_TOKEN está vacío. El secret PAT_CREATE_REPO_1 no está llegando (environment/permissions)."
+            exit 1
+          fi
+
+          echo "Token presente. Longitud: ${#GH_TOKEN}"
+
+          # Forzar login de gh con el token
+          echo "$GH_TOKEN" | gh auth login --with-token
+
+          # Verificar credenciales
+          gh api user >/dev/null
+
+          echo "Creando repositorio 'VedrunaSevillaDAW/${PROJECT_NAME}'..."
+          gh repo create "VedrunaSevillaDAW/${PROJECT_NAME}" --public -d "Proyecto generado por pipeline de la fundación Vedruna" --confirm
+
+          git clone "https://oauth2:${GH_TOKEN}@github.com/VedrunaSevillaDAW/${PROJECT_NAME}.git"
+
+          echo "Repositorio creado como: 'VedrunaSevillaDAW/${PROJECT_NAME}'"
+
       # --- Normalizar nombre para paquete Java ---
       - name: Normalizar nombre del proyecto
         id: normalize
