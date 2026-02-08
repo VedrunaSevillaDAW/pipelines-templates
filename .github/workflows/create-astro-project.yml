@@ -95,8 +95,7 @@ jobs:
         shell: bash
         run: |
           cd "$PROJECT_NAME"
-
-
+      
           cat > Dockerfile << 'EOF'
           # ===== BUILD STAGE =====
           FROM node:20-alpine AS build
@@ -105,20 +104,20 @@ jobs:
           RUN npm install
           COPY . .
           RUN npm run build
-
-
+      
           # ===== RUN STAGE =====
           FROM nginx:alpine
           COPY --from=build /app/dist /usr/share/nginx/html
           EXPOSE 80
-
-
+          EOF
+      
           cat > .dockerignore << 'EOF'
           node_modules
           dist
           .astro
           .git
           EOF
+
 
 
       - name: Docker build (Astro)
