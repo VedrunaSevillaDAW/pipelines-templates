@@ -262,7 +262,6 @@ jobs:
         shell: bash
         run: |
           cd "$PROJECT_NAME"
-          docker build -t "${{ steps.normalize.outputs.normalized }}:ci" .
           
           # Dockerfile multi-stage (build + runtime) para Java 17
           cat > Dockerfile << 'EOF'
@@ -294,7 +293,7 @@ jobs:
         shell: bash
         run: |
           cd "$PROJECT_NAME"
-          docker build -t "${PROJECT_NAME}:ci" .
+          docker build -t "${{ steps.normalize.outputs.normalized }}:ci" .
 
 
       # --- 6. PUSH AL REPOSITORIO NUEVO ---
