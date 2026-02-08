@@ -73,21 +73,26 @@ jobs:
 
 
       # --- 2. GENERACIÓN DEL PROYECTO ASTRO BASE ---
-      - name: Generar proyecto Astro (basic starter, sin deps, sin git)
+      - name: Generar proyecto Astro
         shell: bash
         run: |
           set -e
           cd "$PROJECT_NAME"
+      
+          echo "Generando proyecto Astro..."
+          npm create astro@latest . -- \
+            --template basics \
+            --no-git \
+            --install
+      
+          echo "Contenido del proyecto:"
+          ls -la
+      
+          if [ ! -f package.json ]; then
+            echo " ERROR: package.json NO existe. Astro no se ha creado."
+            exit 1
+          fi
 
-
-          # Crea el proyecto dentro del repo clonado
-          # Template: "basics" = "A basic, helpful starter project"
-          npm create astro@latest . -- --template basics --no-git
-
-
-          # Forzar: "Install dependencies? No"
-          rm -rf node_modules
-          rm -f package-lock.json pnpm-lock.yaml yarn.lock
 
 
       # --- 3. DOCKERIZAR EL PROYECTO ---
