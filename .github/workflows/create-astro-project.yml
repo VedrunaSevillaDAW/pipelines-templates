@@ -1,0 +1,192 @@
+name: 'Astro Project Initializer'
+
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Nombre del proyecto Astro a crear'
+        required: true
+        type: string
+
+
+jobs:
+  initialize-astro-project:
+    runs-on: ubuntu-latest
+    environment: tst
+
+
+    env:
+      PROJECT_NAME: ${{ github.event.inputs.project }}
+
+
+    steps:
+      # --- 0. INSTALAR HERRAMIENTAS NECESARIAS ---
+      - name: Instalar herramientas (jq)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+
+      # --- 0.1 Configurar Node ---
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+
+      # --- 1. CREAR EL REPOSITORIO NUEVO ---
+      - name: Crear nuevo repositorio en GitHub
+        env:
+          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO_1 }}
+        run: |
+          set -e
+
+
+          if [ -z "$GH_TOKEN" ]; then
+            echo "GH_TOKEN está vacío. El secret PAT_CREATE_REPO_1 no está llegando (environment/permissions)."
+            exit 1
+          fi
+
+
+          echo "Token presente. Longitud: ${#GH_TOKEN}"
+
+
+          # Verificar credenciales
+          gh api user
+
+
+          echo "Creando repositorio 'VedrunaSevillaDAW/${PROJECT_NAME}'..."
+          gh repo create "VedrunaSevillaDAW/${PROJECT_NAME}" --public -d "Proyecto Astro generado por pipeline de la fundación Vedruna" --confirm
+
+
+          git clone "https://oauth2:${GH_TOKEN}@github.com/VedrunaSevillaDAW/${PROJECT_NAME}.git"
+          echo "Repositorio creado como: 'VedrunaSevillaDAW/${PROJECT_NAME}'"
+
+
+      # --- Normalizar nombre (para Docker tag, etc.) ---
+      - name: Normalizar nombre del proyecto
+        id: normalize
+        run: |
+          NORMALIZED=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+          echo "normalized=$NORMALIZED" >> $GITHUB_OUTPUT
+
+
+      # --- 2. GENERACIÓN DEL PROYECTO ASTRO BASE ---
+      - name: Generar proyecto Astro (basic starter, sin deps, sin git)
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_NAME"
+
+
+          # Crea el proyecto dentro del repo clonado
+          # Template: "basics" = "A basic, helpful starter project"
+          npm create astro@latest . -- --template basics --no-git
+
+
+          # Forzar: "Install dependencies? No"
+          rm -rf node_modules
+          rm -f package-lock.json pnpm-lock.yaml yarn.lock
+
+
+      # --- 3. DOCKERIZAR EL PROYECTO ---
+      - name: Crear Dockerfile y .dockerignore
+        shell: bash
+        run: |
+          cd "$PROJECT_NAME"
+
+
+          cat > Dockerfile << 'EOF'
+          # ===== BUILD STAGE =====
+          FROM node:20-alpine AS build
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm ci
+          COPY . .
+          RUN npm run build
+
+
+          # ===== RUN STAGE =====
+          FROM nginx:alpine
+          COPY --from=build /app/dist /usr/share/nginx/html
+          EXPOSE 80
+          EOF
+
+
+          cat > .dockerignore << 'EOF'
+          node_modules
+          dist
+          .astro
+          .git
+          EOF
+
+
+      - name: Docker build (Astro)
+        shell: bash
+        run: |
+          cd "$PROJECT_NAME"
+          docker build -t "${{ steps.normalize.outputs.normalized }}:ci" .
+
+
+      # --- 4. README (opcional, pero útil) ---
+      - name: Crear README base
+        shell: bash
+        run: |
+          cd "$PROJECT_NAME"
+          cat > README.md << EOF
+          # $PROJECT_NAME
+
+
+          Proyecto Astro generado automáticamente.
+
+
+          ## Desarrollo
+          \`\`\`bash
+          npm install
+          npm run dev
+          \`\`\`
+
+
+          ## Build
+          \`\`\`bash
+          npm install
+          npm run build
+          \`\`\`
+
+
+          ## Docker
+          \`\`\`bash
+          docker build -t ${{ steps.normalize.outputs.normalized }} .
+          docker run -p 8081:80 ${{ steps.normalize.outputs.normalized }}
+          \`\`\`
+          EOF
+
+
+      # --- 5. PUSH AL REPOSITORIO NUEVO ---
+      - name: Commit and Push to new repository
+        env:
+          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO_1 }}
+        run: |
+          set -e
+          cd "$PROJECT_NAME"
+
+
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+
+          git remote set-url origin "https://oauth2:${GH_TOKEN}@github.com/VedrunaSevillaDAW/${PROJECT_NAME}.git"
+
+
+          git add .
+          git commit -m "feat: Proyecto Astro inicializado por el pipeline de la fundación Vedruna" || echo "No changes to commit"
+          git branch -M main
+          git push -u origin main
+
+
+          echo "Proyecto ubicado en el repositorio: https://github.com/VedrunaSevillaDAW/$PROJECT_NAME"
+
+
+
+
