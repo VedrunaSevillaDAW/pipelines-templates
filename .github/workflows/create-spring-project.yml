@@ -92,11 +92,11 @@ jobs:
       # --- 1. CREAR EL REPOSITORIO NUEVO ---
       - name: Crear nuevo repositorio en GitHub
         env:
-          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO }} # Usa un PAT con permiso de 'repo'
+          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO_1 }} # Usa un PAT con permiso de 'repo'
         run: |
           echo "Creando repositorio '${PROJECT_NAME}'..."
           gh repo create $PROJECT_NAME --public -d "Proyecto generado por pipeline de la fundación Vedruna"
-          git clone https://oauth2:${{ secrets.PAT_CREATE_REPO }}@github.com/${{ github.repository_owner }}/${PROJECT_NAME}.git
+          git clone https://oauth2:${{ secrets.PAT_CREATE_REPO_1 }}@github.com/${{ github.repository_owner }}/${PROJECT_NAME}.git
           echo "Repositorio creado como: '${PROJECT_NAME}'..."
           
       # --- Normalizar nombre para paquete Java ---
@@ -285,7 +285,7 @@ jobs:
       # --- 6. PUSH AL REPOSITORIO NUEVO ---
       - name: Commit and Push to new repository
         env:
-          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO }}
+          GH_TOKEN: ${{ secrets.PAT_CREATE_REPO_1 }}
         run: |
           cd $PROJECT_NAME
           
